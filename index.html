@@ -53,7 +53,7 @@ label.check input{width:22px;height:22px}
 .sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
 .sources>div{display:flex;flex-direction:column;gap:6px}
 .sources small{color:var(--muted)}
-.stage{position:relative;background:#0c1620;border-radius:10px;overflow:hidden;touch-action:none}
+.stage{margin:0 auto;position:relative;background:#0c1620;border-radius:10px;overflow:hidden;touch-action:none}
 .stage canvas{display:block;width:100%;height:auto}
 .stage #ov{position:absolute;inset:0;height:100%}
 .banner{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-family:var(--display);font-size:clamp(2.2rem,11vw,4.5rem);line-height:1;text-transform:uppercase;color:#fff;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
@@ -75,6 +75,13 @@ ol.calls li.in{border-left-color:var(--in)} ol.calls li.out{border-left-color:va
 .pill{font-size:.8rem;font-weight:600;padding:2px 8px;border-radius:999px;border:1.5px solid currentColor}
 .note{border-left:4px solid var(--unsure);padding:8px 12px;background:#fbf3df;border-radius:0 8px 8px 0;font-size:.95rem}
 .hidden{display:none !important}
+@media (orientation:landscape) and (max-height:540px){
+  main{padding:6px 16px;gap:8px}
+  header h1{font-size:1.1rem}
+  .steps{font-size:.8rem}
+  .steps li{padding:1px 8px}
+  .banner{font-size:2.4rem;padding:4px 12px}
+}
 dialog{border:none;border-radius:12px;padding:0;max-width:min(96vw,760px);width:100%}
 dialog::backdrop{background:rgba(12,22,32,.7)}
 dialog .inner{padding:12px;display:flex;flex-direction:column;gap:10px}
@@ -97,6 +104,7 @@ ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
   <!-- STEP 1 -->
   <section class="card" id="s-source">
     <h2>Point a phone at your side of the court</h2>
+    <p><strong>Turn the phone sideways</strong> before you start, so the whole width of the court fits in the picture.</p>
     <p>Each phone watches one half of the court and calls the bounces that land there. Put it on a fixed mount behind the baseline, as high as you safely can, so both sidelines and the baseline are in the picture. For two phones, open this page on both and set one up on each side.</p>
     <div class="sources">
       <div>
@@ -259,7 +267,7 @@ const LABEL={in:"In",out:"Out",unsure:"Too close to call"};
 
 /* ---------- sources ---------- */
 function showMsg(t){const e=$("src-msg");e.textContent=t;e.classList.toggle("hidden",!t);}
-function setSize(w,h){const k=960/Math.max(w,h);S.PW=Math.round(w*k);S.PH=Math.round(h*k);proc.width=ov.width=S.PW;proc.height=ov.height=S.PH;}
+function setSize(w,h){const k=960/Math.max(w,h);S.PW=Math.round(w*k);S.PH=Math.round(h*k);proc.width=ov.width=S.PW;proc.height=ov.height=S.PH;$("stage").style.maxWidth="calc(100dvh * "+(S.PW/S.PH).toFixed(4)+")";}
 function stopSource(){S.running=false;runTok++;S.mode="source";try{vid.pause();}catch(e){}if(S.stream){S.stream.getTracks().forEach(t=>t.stop());S.stream=null;}vid.srcObject=null;if(S.fileUrl){URL.revokeObjectURL(S.fileUrl);S.fileUrl=null;}vid.removeAttribute("src");}
 function go(mode){
   S.mode=mode;
@@ -480,7 +488,7 @@ async function fileLoop(){
 }
 function start(){
   if(!buildH()){alertMsg("The four dots need to make a four-sided shape. Move them apart.");return;}
-  resetRun();S.running=true;S.paused=false;$("b-pause").textContent="Pause";go("run");
+  resetRun();keepAwake();$("stage").scrollIntoView({block:"start"});S.running=true;S.paused=false;$("b-pause").textContent="Pause";go("run");
   $("prog").textContent="";$("b-pause").disabled=false;runTok++;
   if(S.src==="demo"){S.demo=makeDemo();requestAnimationFrame(tick);}
   else if(S.src==="live"){liveFrame();}
@@ -559,6 +567,18 @@ $("b-copy").onclick=async()=>{
   try{await navigator.clipboard.writeText(rows.join("\n"));$("copy-msg").textContent="Copied. Paste it into a spreadsheet.";}
   catch(e){$("copy-msg").textContent="Copy was blocked by this browser.";}
 };
+// the picture changes shape when the phone is turned: resize and line the dots up again
+vid.addEventListener("resize",()=>{
+  if(S.src!=="live"||!vid.videoWidth)return;
+  const pw=S.PW,ph=S.PH;setSize(vid.videoWidth,vid.videoHeight);
+  if(pw===S.PW&&ph===S.PH)return;
+  S.prev1=S.prev2=null;S.tracks=[];
+  if(S.mode==="run"){S.running=false;go("calib");alertMsg("The phone was turned. Line the dots up again.");}
+});
+// keep the screen awake while the camera is watching
+let wake=null;
+async function keepAwake(){try{if(navigator.wakeLock&&!wake){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>{wake=null;});}}catch(e){}}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&S.running)keepAwake();});
 drawMap();
 window.__pb=S;
 </script>
