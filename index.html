@@ -53,10 +53,20 @@ label.check input{width:22px;height:22px}
 .sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
 .sources>div{display:flex;flex-direction:column;gap:6px}
 .sources small{color:var(--muted)}
-.stage{margin:0 auto;position:relative;background:#0c1620;border-radius:10px;overflow:hidden;touch-action:none}
-.stage canvas{display:block;width:100%;height:auto}
-.stage #ov{position:absolute;inset:0;height:100%}
-.banner{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-family:var(--display);font-size:clamp(2.2rem,11vw,4.5rem);line-height:1;text-transform:uppercase;color:#fff;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.stage{position:relative;background:#0c1620;border-radius:10px;overflow:hidden;touch-action:none}
+.frame{position:relative;margin:0 auto;width:100%}
+.frame canvas{display:block;width:100%;height:auto}
+.frame #ov{position:absolute;inset:0;height:100%}
+/* camera mode: the live picture takes over the whole screen */
+.stage.cam{position:fixed;inset:0;z-index:20;border-radius:0;background:#000;display:flex;align-items:center;justify-content:center}
+body.camlock{overflow:hidden}
+/* the heads-up layer is turned to match how the phone is held */
+.hud{position:absolute;left:50%;top:50%;width:100%;height:100%;transform:translate(-50%,-50%);pointer-events:none;display:flex;flex-direction:column}
+.hudbar{display:none}
+.stage.cam .hudbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;background:rgba(12,22,32,.6);color:#fff}
+.hudbar button{pointer-events:auto;background:#fff;border-color:#fff;color:var(--court-dark);min-height:44px}
+#hud-msg{flex:1 1 180px;font-weight:600;font-size:.95rem;line-height:1.25}
+.banner{margin-top:auto;padding:8px 14px;font-family:var(--display);font-size:clamp(2.2rem,11vw,4.5rem);line-height:1;text-transform:uppercase;color:#fff;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 .banner small{font-family:var(--body);font-size:1rem;text-transform:none;font-weight:500}
 .banner.in{background:var(--in)} .banner.out{background:var(--out)} .banner.unsure{background:var(--unsure)}
 .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
@@ -121,7 +131,7 @@ ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
       </div>
       <div>
         <button id="b-live" class="ghost">Use the live camera</button>
-        <small>Calls bounces as they happen. Works when this page is opened as a file or its own site.</small>
+        <small>Opens a full-screen sideways camera and calls bounces as they happen.</small>
       </div>
     </div>
     <p class="note hidden" id="src-msg" role="alert"></p>
@@ -130,9 +140,22 @@ ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
   <!-- shared stage -->
   <section class="hidden" id="s-stage">
     <div class="stage" id="stage">
-      <canvas id="proc" width="960" height="540"></canvas>
-      <canvas id="ov" width="960" height="540"></canvas>
-      <div class="banner hidden" id="banner" role="status" aria-live="assertive"></div>
+      <div class="frame" id="frame">
+        <canvas id="proc" width="960" height="540"></canvas>
+        <canvas id="ov" width="960" height="540"></canvas>
+      </div>
+      <div class="hud" id="hud">
+        <div class="hudbar" id="hudbar">
+          <span id="hud-msg"></span>
+          <button id="h-far" class="small" type="button">Far dots: net</button>
+          <button id="h-start" class="small" type="button">Start</button>
+          <button id="h-pause" class="small" type="button">Pause</button>
+          <button id="h-dots" class="small" type="button">Move dots</button>
+          <button id="h-rot" class="small" type="button">Rotate</button>
+          <button id="h-done" class="small" type="button">Done</button>
+        </div>
+        <div class="banner hidden" id="banner" role="status" aria-live="assertive"></div>
+      </div>
     </div>
   </section>
 
@@ -243,6 +266,7 @@ const S = {
   handles:[[0.12,0.80],[0.88,0.80],[0.70,0.38],[0.30,0.38]],
   H:null, Hinv:null,
   prev1:null, prev2:null, tracks:[], calls:[], pending:[], ring:[],
+  rot:90, rotManual:false, camDone:false, down:[0,1],
   lastCallT:-9, t:0, frameN:0, bannerUntil:0, fileUrl:null, stream:null, demo:null, drag:-1
 };
 
@@ -251,7 +275,10 @@ function solve(A,b){const n=b.length;for(let i=0;i<n;i++){let m=i;for(let r=i+1;
 function homography(src,dst){const A=[],b=[];for(let i=0;i<4;i++){const [u,v]=src[i],[X,Y]=dst[i];A.push([u,v,1,0,0,0,-u*X,-v*X]);b.push(X);A.push([0,0,0,u,v,1,-u*Y,-v*Y]);b.push(Y);}return solve(A,b);}
 function applyH(h,u,v){const d=h[6]*u+h[7]*v+1;return [(h[0]*u+h[1]*v+h[2])/d,(h[3]*u+h[4]*v+h[5])/d];}
 function courtRef(){const y=$("ref").value==="kitchen"?NVZ:0;return [[0,L_M],[W_M,L_M],[W_M,y],[0,y]];}
-function buildH(){const img=S.handles.map(([x,y])=>[x*S.PW,y*S.PH]);const ref=courtRef();S.H=homography(img,ref);S.Hinv=homography(ref,img);return !!(S.H&&S.Hinv);}
+function buildH(){const img=S.handles.map(([x,y])=>[x*S.PW,y*S.PH]);const ref=courtRef();S.H=homography(img,ref);S.Hinv=homography(ref,img);
+  const vx=(img[0][0]+img[1][0]-img[2][0]-img[3][0]),vy=(img[0][1]+img[1][1]-img[2][1]-img[3][1]);
+  S.down=Math.abs(vx)>Math.abs(vy)?[Math.sign(vx),0]:[0,Math.sign(vy)||1];
+  return !!(S.H&&S.Hinv);}
 
 /* ---------- verdict ---------- */
 function judge(X,Y){
@@ -267,7 +294,7 @@ const LABEL={in:"In",out:"Out",unsure:"Too close to call"};
 
 /* ---------- sources ---------- */
 function showMsg(t){const e=$("src-msg");e.textContent=t;e.classList.toggle("hidden",!t);}
-function setSize(w,h){const k=960/Math.max(w,h);S.PW=Math.round(w*k);S.PH=Math.round(h*k);proc.width=ov.width=S.PW;proc.height=ov.height=S.PH;$("stage").style.maxWidth="calc(100dvh * "+(S.PW/S.PH).toFixed(4)+")";}
+function setSize(w,h){const k=960/Math.max(w,h);S.PW=Math.round(w*k);S.PH=Math.round(h*k);proc.width=ov.width=S.PW;proc.height=ov.height=S.PH;$("frame").style.maxWidth="calc(100dvh * "+(S.PW/S.PH).toFixed(4)+")";}
 function stopSource(){S.running=false;runTok++;S.mode="source";try{vid.pause();}catch(e){}if(S.stream){S.stream.getTracks().forEach(t=>t.stop());S.stream=null;}vid.srcObject=null;if(S.fileUrl){URL.revokeObjectURL(S.fileUrl);S.fileUrl=null;}vid.removeAttribute("src");}
 function go(mode){
   S.mode=mode;
@@ -279,7 +306,47 @@ function go(mode){
   $("scrub-l").classList.toggle("hidden",S.src!=="file");
   $("speed-l").classList.toggle("hidden",S.src!=="file");
   $("b-again").classList.toggle("hidden",S.src==="live");
+  if(mode==="source")S.camDone=false;
+  $("b-recal").classList.toggle("hidden",S.camDone);$("b-pause").classList.toggle("hidden",S.camDone);
+  layoutHud();
   if(mode==="calib")calibLoop();
+}
+/* ---------- full-screen camera mode ---------- */
+const isCam=()=>S.src==="live"&&!S.camDone&&(S.mode==="calib"||S.mode==="run");
+// how far the heads-up layer is turned: only needed when the page itself has not rotated
+const hudRot=()=>!isCam()||window.innerWidth>window.innerHeight?0:S.rot;
+function hudMsg(){
+  if(!isCam())return;
+  if(S.mode==="calib")$("hud-msg").textContent="Drag dots 1 and 2 onto the baseline corners, 3 and 4 where the sidelines meet the "+($("ref").value==="kitchen"?"kitchen line":"net")+".";
+  else{let i=0,o=0,u=0;S.calls.forEach(c=>{if(c.v==="in")i++;else if(c.v==="out")o++;else u++;});$("hud-msg").textContent="In "+i+" · Out "+o+" · Too close "+u;}
+}
+function layoutHud(){
+  const st=$("stage"),hud=$("hud"),cam=isCam();
+  st.classList.toggle("cam",cam);document.body.classList.toggle("camlock",cam);
+  const r=hudRot();
+  if(r){hud.style.width=st.clientHeight+"px";hud.style.height=st.clientWidth+"px";}else{hud.style.width="100%";hud.style.height="100%";}
+  hud.style.transform="translate(-50%,-50%) rotate("+r+"deg)";
+  if(!cam)return;
+  const cal=S.mode==="calib";
+  $("h-far").classList.toggle("hidden",!cal);$("h-start").classList.toggle("hidden",!cal);
+  $("h-pause").classList.toggle("hidden",cal);$("h-dots").classList.toggle("hidden",cal);
+  $("h-far").textContent="Far dots: "+($("ref").value==="kitchen"?"kitchen":"net");
+  $("h-done").textContent=cal?"Exit":"Done";
+  hudMsg();
+}
+window.addEventListener("resize",layoutHud);
+window.addEventListener("orientationchange",()=>setTimeout(layoutHud,200));
+// read which way up the phone is held, so the buttons and calls face the right way
+window.addEventListener("deviceorientation",e=>{
+  if(e.beta==null||e.gamma==null||S.rotManual||!isCam())return;
+  const b=e.beta*Math.PI/180,g=e.gamma*Math.PI/180,ux=-Math.cos(b)*Math.sin(g),uy=Math.sin(b);
+  const r=ux>0.6?90:ux<-0.6?-90:uy>0.6?0:S.rot;
+  if(r!==S.rot){S.rot=r;layoutHud();}
+});
+function camDone(){
+  S.running=false;S.pending.forEach(finishClip);S.pending=[];
+  if(S.stream){S.stream.getTracks().forEach(t=>t.stop());S.stream=null;}
+  S.camDone=true;go("run");renderCalls();
 }
 function useFile(file){
   if(!file)return;showMsg("");stopSource();S.src="file";
@@ -288,7 +355,9 @@ function useFile(file){
   vid.onerror=()=>{showMsg("This video could not be opened. Try an MP4 or MOV recorded by your phone camera.");go("source");};
 }
 async function useLive(){
-  showMsg("");stopSource();
+  showMsg("");stopSource();S.camDone=false;S.rotManual=false;
+  // iPhones ask before sharing which way up the phone is held
+  try{if(window.DeviceOrientationEvent&&typeof DeviceOrientationEvent.requestPermission==="function")await DeviceOrientationEvent.requestPermission();}catch(e){}
   try{
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error("none");
     S.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:60}}});
@@ -348,7 +417,7 @@ function calibLoop(){
   S.handles.forEach(([x,y],i)=>{const px=x*S.PW,py=y*S.PH;
     octx.beginPath();octx.arc(px,py,16,0,7);octx.fillStyle="rgba(255,255,255,.25)";octx.fill();octx.lineWidth=3;octx.strokeStyle="#ffffff";octx.stroke();
     octx.beginPath();octx.arc(px,py,3,0,7);octx.fillStyle="#ffe14d";octx.fill();
-    octx.font="700 22px Barlow, Arial";octx.fillStyle="#fff";octx.strokeStyle="#000";octx.lineWidth=4;octx.strokeText(i+1,px+18,py-14);octx.fillText(i+1,px+18,py-14);});
+    octx.save();octx.translate(px,py);octx.rotate(hudRot()*Math.PI/180);octx.font="700 22px Barlow, Arial";octx.fillStyle="#fff";octx.strokeStyle="#000";octx.lineWidth=4;octx.strokeText(i+1,18,-14);octx.fillText(i+1,18,-14);octx.restore();});
   requestAnimationFrame(calibLoop);
 }
 function evPos(e){const r=ov.getBoundingClientRect();return [(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height];}
@@ -399,7 +468,8 @@ function track(cands,t){
   cands.forEach((c,i)=>{if(!used.has(i)&&S.tracks.length<10)S.tracks.push({pts:[{t,x:c.x,y:c.y,r:c.r}]});});
   S.tracks=S.tracks.filter(tr=>t-tr.pts[tr.pts.length-1].t<0.13);
 }
-function kink(p,c,k){const vb=(p[c].y-p[c-k].y)/(p[c].t-p[c-k].t||1e-3),va=(p[c+k].y-p[c].y)/(p[c+k].t-p[c].t||1e-3);return vb>0&&va<vb*0.5?vb-va:0;}
+const fall=q=>q.x*S.down[0]+q.y*S.down[1];   // distance along the picture's down direction
+function kink(p,c,k){const vb=(fall(p[c])-fall(p[c-k]))/(p[c].t-p[c-k].t||1e-3),va=(fall(p[c+k])-fall(p[c]))/(p[c+k].t-p[c].t||1e-3);return vb>0&&va<vb*0.5?vb-va:0;}
 function checkBounce(tr){
   const p=tr.pts,n=p.length;if(n<9)return;
   const fd=(p[n-1].t-p[n-6].t)/5||1/60;                 // frame spacing
@@ -407,7 +477,7 @@ function checkBounce(tr){
   const c=n-k-2;if(c-k-1<0)return;
   const P=p[c],kc=kink(p,c,k);
   // a bounce is a sudden upward turn in the picture: falling speed drops sharply
-  if(!(kc>S.PH*0.28&&kc>=kink(p,c-1,k)&&kc>kink(p,c+1,k)))return;
+  if(!(kc>Math.min(S.PW,S.PH)*0.28&&kc>=kink(p,c-1,k)&&kc>kink(p,c+1,k)))return;
   if(tr.lastB&&P.t-tr.lastB<0.25)return;
   if(P.t-S.lastCallT<0.35)return;
   let travel=0;for(let i=1;i<n;i++)travel+=Math.hypot(p[i].x-p[i-1].x,p[i].y-p[i-1].y);if(travel<S.PW*0.03)return;
@@ -415,12 +485,12 @@ function checkBounce(tr){
   const hit=intersect(fitLine(p.slice(c-k,c)),fitLine(p.slice(c+1,c+k+1)));
   if(hit&&Math.hypot(hit.x-P.x,hit.y-P.y)<S.PW*0.03){bx=hit.x;by=hit.y;}
   const rs=p.slice(c-k,c+k+1).map(q=>q.r).sort((a,b)=>a-b),rr=rs[rs.length>>1];
-  by+=rr;                                    // contact point is under the ball
+  bx+=rr*S.down[0];by+=rr*S.down[1];        // contact point is under the ball
   const [X,Y]=applyH(S.H,bx,by);
   if(!(X>-2.5&&X<W_M+2.5&&Y>-0.25&&Y<L_M+3.5))return;   // off the watched half: not this phone's call
   tr.lastB=P.t;S.lastCallT=P.t;
   const j=judge(X,Y);
-  const call={id:S.calls.length+1,t:P.t,X,Y,ix:bx/S.PW,iy:by/S.PH,v:j.v,m:j.m,line:j.line,serve:$("serve").checked,check:null,clip:null};
+  const call={id:S.calls.length+1,t:P.t,X,Y,ix:bx/S.PW,iy:by/S.PH,v:j.v,m:j.m,line:j.line,serve:$("serve").checked,check:null,clip:null,down:S.down.slice()};
   if(S.src==="demo"){const tr2=S.demo.truth.reduce((b,q)=>Math.abs(q.t-P.t)<Math.abs(b.t-P.t)?q:b,S.demo.truth[0]||{t:1e9});if(tr2&&Math.abs(tr2.t-P.t)<0.2){call.truth=Math.min(tr2.X,W_M-tr2.X,L_M-tr2.Y)+BALL_R*0.6;call.err=Math.hypot(tr2.X-X,tr2.Y-Y);}}
   S.calls.push(call);S.pending.push(call);announce(call);renderCalls();
 }
@@ -488,7 +558,7 @@ async function fileLoop(){
 }
 function start(){
   if(!buildH()){alertMsg("The four dots need to make a four-sided shape. Move them apart.");return;}
-  resetRun();keepAwake();$("stage").scrollIntoView({block:"start"});S.running=true;S.paused=false;$("b-pause").textContent="Pause";go("run");
+  resetRun();keepAwake();$("stage").scrollIntoView({block:"start"});S.running=true;S.paused=false;$("b-pause").textContent=$("h-pause").textContent="Pause";go("run");
   $("prog").textContent="";$("b-pause").disabled=false;runTok++;
   if(S.src==="demo"){S.demo=makeDemo();requestAnimationFrame(tick);}
   else if(S.src==="live"){liveFrame();}
@@ -510,7 +580,7 @@ function renderCalls(){
       '<div class="row"><button class="small" data-rp="'+c.id+'"'+(c.clip&&c.clip.length?'':' disabled')+'>Replay</button><button class="small ghost" data-ok="'+c.id+'">Right</button><button class="small ghost" data-no="'+c.id+'">Wrong</button><button class="small ghost" data-del="'+c.id+'">Not a bounce</button></div>';
     ol.appendChild(li);
   });
-  $("n-in").textContent=ni;$("n-out").textContent=no;$("n-un").textContent=nu;$("n-acc").textContent=ok+"/"+ck;
+  $("n-in").textContent=ni;$("n-out").textContent=no;$("n-un").textContent=nu;$("n-acc").textContent=ok+"/"+ck;hudMsg();
   drawMap();
 }
 $("calls").addEventListener("click",e=>{
@@ -539,10 +609,13 @@ async function replay(c){
   if(!$("dlg").open)$("dlg").showModal();
   const frames=await Promise.all(c.clip.map(f=>createImageBitmap(f.b)));
   if(tok!==rpTok)return;
-  cv.width=frames[0].width;cv.height=frames[0].height;
+  const d=c.down||[0,1],fw=frames[0].width,fh=frames[0].height,turn=d[0]!==0;
+  cv.width=turn?fh:fw;cv.height=turn?fw:fh;
   const col={in:"#3ddc84",out:"#ff6b5e",unsure:"#ffc04d"}[c.v];
-  const paint=i=>{x.drawImage(frames[i],0,0);drawCourtOutline(x,cv.width/S.PW,cv.height/S.PH,0.5);
-    if(c.clip[i].t>=c.t-1e-4){x.beginPath();x.arc(c.ix*cv.width,c.iy*cv.height,8,0,7);x.lineWidth=3;x.strokeStyle=col;x.stroke();}};
+  const paint=i=>{x.setTransform(1,0,0,1,0,0);
+    if(d[0]<0){x.translate(0,cv.height);x.rotate(-Math.PI/2);}else if(d[0]>0){x.translate(cv.width,0);x.rotate(Math.PI/2);}else if(d[1]<0){x.translate(cv.width,cv.height);x.rotate(Math.PI);}
+    x.drawImage(frames[i],0,0);drawCourtOutline(x,fw/S.PW,fh/S.PH,0.5);
+    if(c.clip[i].t>=c.t-1e-4){x.beginPath();x.arc(c.ix*fw,c.iy*fh,8,0,7);x.lineWidth=3;x.strokeStyle=col;x.stroke();}};
   const slow=4,t0=performance.now(),first=c.clip[0].t;let i=0;
   (function step(){if(tok!==rpTok)return;const el=(performance.now()-t0)/1000/slow+first;while(i<frames.length-1&&c.clip[i+1].t<=el)i++;paint(i);if(i<frames.length-1)requestAnimationFrame(step);})();
 }
@@ -559,7 +632,12 @@ const toSource=()=>{stopSource();S.src=null;$("f-rec").value="";$("f-pick").valu
 $("b-back1").onclick=toSource;$("b-new").onclick=toSource;
 $("b-recal").onclick=()=>{S.running=false;runTok++;go("calib");};
 $("b-again").onclick=start;
-$("b-pause").onclick=()=>{S.paused=!S.paused;$("b-pause").textContent=S.paused?"Resume":"Pause";};
+$("b-pause").onclick=$("h-pause").onclick=()=>{S.paused=!S.paused;$("b-pause").textContent=$("h-pause").textContent=S.paused?"Resume":"Pause";};
+$("h-start").onclick=start;
+$("h-dots").onclick=()=>$("b-recal").onclick();
+$("h-far").onclick=()=>{$("ref").value=$("ref").value==="net"?"kitchen":"net";layoutHud();};
+$("h-rot").onclick=()=>{S.rotManual=true;S.rot=S.rot===90?-90:S.rot===-90?0:90;layoutHud();};
+$("h-done").onclick=()=>{if(S.mode==="calib")toSource();else camDone();};
 $("band").oninput=e=>{$("band-v").textContent=e.target.value+" cm";S.calls.forEach(c=>{const j=Math.abs(c.m)<e.target.value/100?"unsure":(c.m>=0?"in":"out");c.v=j;});renderCalls();};
 $("sens").oninput=e=>{$("sens-v").textContent=e.target.value;};
 $("b-copy").onclick=async()=>{
@@ -570,7 +648,7 @@ $("b-copy").onclick=async()=>{
 // the picture changes shape when the phone is turned: resize and line the dots up again
 vid.addEventListener("resize",()=>{
   if(S.src!=="live"||!vid.videoWidth)return;
-  const pw=S.PW,ph=S.PH;setSize(vid.videoWidth,vid.videoHeight);
+  const pw=S.PW,ph=S.PH;setSize(vid.videoWidth,vid.videoHeight);layoutHud();
   if(pw===S.PW&&ph===S.PH)return;
   S.prev1=S.prev2=null;S.tracks=[];
   if(S.mode==="run"){S.running=false;go("calib");alertMsg("The phone was turned. Line the dots up again.");}
