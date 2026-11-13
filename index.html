@@ -150,6 +150,7 @@ ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
         <div class="hudbar" id="hudbar">
           <span id="hud-msg"></span>
           <button id="h-far" class="small" type="button">Far dots: net</button>
+          <button id="h-ball" class="small" type="button">Ball: green</button>
           <button id="h-start" class="small" type="button">Start</button>
           <button id="h-pause" class="small" type="button">Pause</button>
           <button id="h-dots" class="small" type="button">Move dots</button>
@@ -213,6 +214,8 @@ ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
           <input id="band" type="range" min="0" max="20" value="6"></label>
         <label for="sens">Motion sensitivity: <span id="sens-v">24</span>
           <input id="sens" type="range" min="10" max="60" value="24"></label>
+        <label for="ballc">Ball colour
+          <select id="ballc"><option value="green" selected>Green or yellow</option><option value="orange">Orange</option><option value="pink">Pink or red</option><option value="any">Any colour (follows anything small that moves)</option></select></label>
         <label for="speed" id="speed-l">Frames per second in the clip
           <select id="speed"><option value="30">30</option><option value="60" selected>60</option><option value="120">120 (slo-mo)</option><option value="240">240 (slo-mo)</option></select></label>
       </div>
@@ -237,7 +240,7 @@ ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
   <section class="card">
     <h2>What this prototype does and does not do</h2>
     <ul class="plain">
-      <li>It finds the ball by motion, spots the frame where it stops falling and starts rising, and maps that spot onto the court.</li>
+      <li>It finds the ball by motion and colour, spots the frame where it stops falling and starts rising, and maps that spot onto the court.</li>
       <li>A ball touching the line is in. Anything inside the too-close zone is reported as too close to call, never as out.</li>
       <li>You are the check. Watch the replay and mark each call right or wrong. That tally is your accuracy count.</li>
       <li>A paddle hit low to the ground can look like a bounce. Use Not a bounce to remove it.</li>
@@ -335,7 +338,8 @@ function layoutHud(){
   hud.style.transform="translate(-50%,-50%) rotate("+r+"deg)";
   if(!cam)return;
   const cal=S.mode==="calib";
-  $("h-far").classList.toggle("hidden",!cal);$("h-start").classList.toggle("hidden",!cal);
+  $("h-far").classList.toggle("hidden",!cal);$("h-ball").classList.toggle("hidden",!cal);
+  $("h-ball").textContent="Ball: "+{green:"green/yellow",orange:"orange",pink:"pink/red",any:"any colour"}[$("ballc").value];$("h-start").classList.toggle("hidden",!cal);
   $("h-pause").classList.toggle("hidden",cal);$("h-dots").classList.toggle("hidden",cal);
   $("h-far").textContent="Far dots: "+($("ref").value==="kitchen"?"kitchen":"net");
   $("h-done").textContent=cal?"Exit":"Done";
@@ -403,7 +407,7 @@ function setZoom(z){
   let hwz=1;
   if(S.hw){hwz=Math.min(S.hw.max,Math.max(S.hw.min,z));const tr=camTrack();if(tr)tr.applyConstraints({advanced:[{zoom:hwz}]}).catch(()=>{});}
   S.dz=Math.max(1,z/hwz);S.zoom=z;showZoom();
-  buildH();S.prev1=S.prev2=null;S.tracks=[];   // the picture changed: start tracking afresh
+  buildH();S.bg=null;S.prev1=S.prev2=null;S.tracks=[];   // the picture changed: start tracking afresh
 }
 async function nextLens(){
   if(S.lenses.length<2)return;
@@ -474,16 +478,28 @@ ov.addEventListener("pointercancel",()=>{S.drag=-1;});
 $("scrub").addEventListener("input",e=>{if(S.src==="file"&&vid.duration)vid.currentTime=vid.duration*e.target.value/1000;});
 
 /* ---------- detection ---------- */
-function resetRun(){S.prev1=S.prev2=null;S.tracks=[];S.calls=[];S.pending=[];S.ring=[];S.lastCallT=-9;S.frameN=0;S.bannerUntil=0;$("banner").classList.add("hidden");renderCalls();}
+function resetRun(){S.bg=null;S.prev1=S.prev2=null;S.tracks=[];S.calls=[];S.pending=[];S.ring=[];S.lastCallT=-9;S.frameN=0;S.bannerUntil=0;$("banner").classList.add("hidden");renderCalls();}
 let mask=null,stack=null;
+// hue of a pixel in degrees, or -1 when it is too dark or too grey to have a clear colour
+function hueOf(r,g,b){const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;if(mx<60||d<mx*0.25)return -1;let h=mx===r?((g-b)/d)%6:mx===g?(b-r)/d+2:(r-g)/d+4;h*=60;return h<0?h+360:h;}
+function ballHue(h,mode){return h<0?false:mode==="green"?h>=40&&h<=170:mode==="orange"?h>=8&&h<=45:h>=290||h<=8;}
+// how many picture pixels wide a real ball (7.4 cm) would be if it sat on the court at this spot
+function ballPx(x,y){
+  if(!S.H)return 0;
+  const a=applyH(S.H,x,y),b=applyH(S.H,x+Math.abs(S.down[1]),y+Math.abs(S.down[0])),m=Math.hypot(b[0]-a[0],b[1]-a[1]);
+  if(!(m>1e-5)||!isFinite(m))return 0;
+  const d=2*BALL_R/m;return d>1.2&&d<300?d:0;
+}
 function detect(data){
-  const w=S.PW,h=S.PH,n=w*h,thr=+$("sens").value;
+  const w=S.PW,h=S.PH,n=w*h,thr=+$("sens").value,cm=$("ballc").value;
   if(!mask||mask.length!==n){mask=new Uint8Array(n);stack=new Int32Array(n);}
-  const a=S.prev1,b=S.prev2;let on=0,moved=0;
+  const a=S.prev1,b=S.prev2,bg=S.bg&&S.bg.length===data.length?S.bg:null;let on=0,moved=0;
   for(let i=0,j=0;i<n;i++,j+=4){
     const r=data[j],g=data[j+1],bl=data[j+2];
     const d1=Math.max(Math.abs(r-a[j]),Math.abs(g-a[j+1]),Math.abs(bl-a[j+2]));
-    if(d1>thr){moved++;const d2=Math.max(Math.abs(r-b[j]),Math.abs(g-b[j+1]),Math.abs(bl-b[j+2]));if(d2>thr){mask[i]=1;on++;continue;}}
+    if(d1>thr){moved++;const d2=Math.max(Math.abs(r-b[j]),Math.abs(g-b[j+1]),Math.abs(bl-b[j+2]));
+      // must also differ from the remembered empty court, so ground uncovered behind a moving foot does not count
+      if(d2>thr&&(!bg||Math.max(Math.abs(r-bg[j]),Math.abs(g-bg[j+1]),Math.abs(bl-bg[j+2]))>thr)){mask[i]=1;on++;continue;}}
     mask[i]=0;
   }
   if(!moved)return null;                     // same picture as last time: a repeated frame
@@ -491,12 +507,16 @@ function detect(data){
   const out=[],maxA=Math.round(n/900);
   for(let i=0;i<n;i++){
     if(mask[i]!==1)continue;
-    let sp=0,area=0,sx=0,sy=0,x0=w,x1=0,y0=h,y1=0;stack[sp++]=i;mask[i]=2;
+    let sp=0,area=0,sx=0,sy=0,x0=w,x1=0,y0=h,y1=0,hit=0;stack[sp++]=i;mask[i]=2;
     while(sp){const p=stack[--sp],x=p%w,y=(p-x)/w;area++;sx+=x;sy+=y;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+      if(cm!=="any"&&ballHue(hueOf(data[p*4],data[p*4+1],data[p*4+2]),cm))hit++;
       for(let dy=-1;dy<=1;dy++){const yy=y+dy;if(yy<0||yy>=h)continue;for(let dx=-1;dx<=1;dx++){const xx=x+dx;if(xx<0||xx>=w)continue;const q=yy*w+xx;if(mask[q]===1){mask[q]=2;stack[sp++]=q;}}}}
     if(area<3||area>maxA)continue;
-    const bw=x1-x0+1,bh=y1-y0+1;if(Math.max(bw,bh)/Math.min(bw,bh)>6)continue;
-    out.push({x:sx/area,y:sy/area,r:Math.min(bw,bh)/2,area});
+    if(cm!=="any"&&hit<Math.max(2,area*0.3))continue;          // not the ball's colour
+    const bw=x1-x0+1,bh=y1-y0+1,lo=Math.min(bw,bh),hi=Math.max(bw,bh);if(hi/lo>6)continue;
+    const cx=sx/area,cy=sy/area,bp=ballPx(cx,cy);
+    if(bp&&(lo>bp*5+3||hi>bp*12+4))continue;                    // far too big to be a ball at this spot
+    out.push({x:cx,y:cy,r:lo/2,area});
   }
   return out.length>40?[]:out;
 }
@@ -523,7 +543,11 @@ function checkBounce(tr){
   const c=n-k-2;if(c-k-1<0)return;
   const P=p[c],kc=kink(p,c,k);
   // a bounce is a sudden upward turn in the picture: falling speed drops sharply
-  if(!(kc>Math.min(S.PW,S.PH)*0.28&&kc>=kink(p,c-1,k)&&kc>kink(p,c+1,k)))return;
+  // judged in real units where the court scale is known: a ball arrives fast and turns sharply, a planted foot does not
+  const bp=ballPx(P.x,P.y),pxm=bp?bp/(2*BALL_R):0;
+  const need=pxm?Math.max(Math.min(S.PW,S.PH)*0.15,2.5*pxm):Math.min(S.PW,S.PH)*0.28;
+  if(!(kc>need&&kc>=kink(p,c-1,k)&&kc>kink(p,c+1,k)))return;
+  if(pxm&&(fall(P)-fall(p[c-k]))/(P.t-p[c-k].t||1e-3)<1.0*pxm)return;
   if(tr.lastB&&P.t-tr.lastB<0.25)return;
   if(P.t-S.lastCallT<0.35)return;
   let travel=0;for(let i=1;i<n;i++)travel+=Math.hypot(p[i].x-p[i-1].x,p[i].y-p[i-1].y);if(travel<S.PW*0.03)return;
@@ -557,6 +581,9 @@ function onFrame(t){
   let dup=false;
   if(S.prev1&&S.prev2&&S.prev1.length===data.length){const cs=detect(data);if(cs===null)dup=true;else track(cs,t);}
   if(!dup){S.prev2=S.prev1;S.prev1=data;}
+  // slowly learn what the empty court looks like
+  if(!S.bg||S.bg.length!==data.length)S.bg=new Uint8ClampedArray(data);
+  else if(S.frameN%3===0){const g=S.bg;for(let j=0;j<data.length;j+=4){g[j]=(g[j]*15+data[j]+8)>>4;g[j+1]=(g[j+1]*15+data[j+1]+8)>>4;g[j+2]=(g[j+2]*15+data[j+2]+8)>>4;}}
   // replay buffer
   const cw=480,ch=Math.round(480*S.PH/S.PW);if(clipC.width!==cw||clipC.height!==ch){clipC.width=cw;clipC.height=ch;}
   clipX.drawImage(proc,0,0,cw,ch);
@@ -567,7 +594,9 @@ function onFrame(t){
 function finishClip(c){c.clip=S.ring.filter(f=>f.t>=c.t-1.0&&f.t<=c.t+0.7).sort((a,b)=>a.t-b.t);const el=document.querySelector('[data-rp="'+c.id+'"]');if(el)el.disabled=!c.clip.length;}
 function drawOverlay(){
   octx.clearRect(0,0,S.PW,S.PH);drawCourtOutline(octx,1,1,0.55);
-  S.tracks.forEach(tr=>{if(tr.pts.length<4)return;octx.strokeStyle="#ffe14d";octx.lineWidth=2;octx.beginPath();tr.pts.forEach((p,i)=>i?octx.lineTo(p.x,p.y):octx.moveTo(p.x,p.y));octx.stroke();});
+  let lead=null;
+  S.tracks.forEach(tr=>{if(tr.pts.length<4)return;if(!lead||tr.pts.length>lead.pts.length)lead=tr;octx.strokeStyle="#ffe14d";octx.lineWidth=2;octx.beginPath();tr.pts.slice(-25).forEach((p,i)=>i?octx.lineTo(p.x,p.y):octx.moveTo(p.x,p.y));octx.stroke();});
+  if(lead){const q=lead.pts[lead.pts.length-1];octx.beginPath();octx.arc(q.x,q.y,Math.max(10,q.r+7),0,7);octx.lineWidth=3;octx.strokeStyle="#ffffff";octx.stroke();}
   const col={in:"#3ddc84",out:"#ff6b5e",unsure:"#ffc04d"};
   S.calls.slice(-6).forEach(c=>{octx.beginPath();octx.arc(c.ix*S.PW,c.iy*S.PH,9,0,7);octx.lineWidth=3;octx.strokeStyle=col[c.v];octx.stroke();});
   if(performance.now()>S.bannerUntil)$("banner").classList.add("hidden");
@@ -683,6 +712,7 @@ $("h-start").onclick=start;
 $("h-zin").onclick=()=>setZoom(S.zoom*1.25);
 $("h-zout").onclick=()=>setZoom(S.zoom/1.25);
 $("h-lens").onclick=nextLens;
+$("h-ball").onclick=()=>{const o=["green","orange","pink","any"];$("ballc").value=o[(o.indexOf($("ballc").value)+1)%o.length];layoutHud();};
 $("h-dots").onclick=()=>$("b-recal").onclick();
 $("h-far").onclick=()=>{$("ref").value=$("ref").value==="net"?"kitchen":"net";layoutHud();};
 $("h-rot").onclick=()=>{S.rotManual=true;S.rot=S.rot===90?-90:S.rot===-90?0:90;layoutHud();};
