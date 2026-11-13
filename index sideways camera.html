@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pickleballer Line Caller</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: one column, courtside tool. Video on top, the call in huge type, list of calls under it. Light theme only so it reads in sunlight. */
+:root{
+  color-scheme: light;
+  --paper:#f3f5f1;
+  --card:#ffffff;
+  --ink:#14212b;
+  --muted:#51606b;
+  --rule:#cfd6d2;
+  --court:#1d5fa8;      /* accent: court blue */
+  --court-dark:#134479;
+  --in:#0b6b3a;
+  --out:#b3261e;
+  --unsure:#8a5a00;
+  --ball:#d9e021;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Barlow",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45}
+main{max-width:760px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:16px}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-family:var(--display);font-size:2rem;line-height:1;margin:0;letter-spacing:.01em;text-transform:uppercase}
+h1 span{color:var(--court)}
+h2{font-family:var(--display);font-size:1.35rem;margin:0;text-transform:uppercase;letter-spacing:.02em;text-wrap:balance}
+p{margin:0;max-width:65ch}
+.muted{color:var(--muted)}
+.steps{display:flex;gap:6px;list-style:none;margin:0;padding:0;font-family:var(--display);font-size:1rem;text-transform:uppercase}
+.steps li{padding:4px 10px;border-radius:999px;border:1.5px solid var(--rule);color:var(--muted)}
+.steps li[aria-current="step"]{background:var(--court);border-color:var(--court);color:#fff}
+.card{background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button,.btn{font:600 1rem var(--body);min-height:48px;padding:10px 16px;border-radius:8px;border:2px solid var(--court);background:var(--court);color:#fff;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-align:center}
+button.ghost,.btn.ghost{background:var(--card);color:var(--court-dark)}
+button.small{min-height:40px;padding:6px 12px;font-size:.92rem}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,.btn:focus-within,select:focus-visible,input:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.btn input{position:absolute;opacity:0;width:1px;height:1px}
+.btn{position:relative}
+select,input[type=range]{font:inherit;min-height:44px}
+select{padding:6px 10px;border-radius:8px;border:1.5px solid var(--rule);background:var(--card);color:var(--ink);max-width:100%}
+label{font-weight:500;display:flex;flex-direction:column;gap:4px;font-size:.95rem}
+label.check{flex-direction:row;align-items:center;gap:8px;min-height:44px}
+label.check input{width:22px;height:22px}
+.sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.sources>div{display:flex;flex-direction:column;gap:6px}
+.sources small{color:var(--muted)}
+.stage{margin:0 auto;position:relative;background:#0c1620;border-radius:10px;overflow:hidden;touch-action:none}
+.stage canvas{display:block;width:100%;height:auto}
+.stage #ov{position:absolute;inset:0;height:100%}
+.banner{position:absolute;left:0;right:0;bottom:0;padding:8px 14px;font-family:var(--display);font-size:clamp(2.2rem,11vw,4.5rem);line-height:1;text-transform:uppercase;color:#fff;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.banner small{font-family:var(--body);font-size:1rem;text-transform:none;font-weight:500}
+.banner.in{background:var(--in)} .banner.out{background:var(--out)} .banner.unsure{background:var(--unsure)}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.tile{border:1px solid var(--rule);border-radius:8px;padding:8px 10px;background:var(--card)}
+.tile b{display:block;font-family:var(--display);font-size:1.7rem;line-height:1;font-variant-numeric:tabular-nums}
+.tile span{font-size:.8rem;color:var(--muted)}
+.split{display:grid;grid-template-columns:1fr 150px;gap:12px;align-items:start}
+@media (max-width:520px){.split{grid-template-columns:1fr}.split #map{max-width:180px}}
+#map{width:100%;height:auto;border:1px solid var(--rule);border-radius:8px;background:#2f7a52}
+ol.calls{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+ol.calls li{border:1px solid var(--rule);border-left-width:8px;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--card)}
+ol.calls li.in{border-left-color:var(--in)} ol.calls li.out{border-left-color:var(--out)} ol.calls li.unsure{border-left-color:var(--unsure)}
+.verdict{font-family:var(--display);font-size:1.4rem;text-transform:uppercase;line-height:1}
+.verdict.in{color:var(--in)} .verdict.out{color:var(--out)} .verdict.unsure{color:var(--unsure)}
+.meta{font-size:.9rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.pill{font-size:.8rem;font-weight:600;padding:2px 8px;border-radius:999px;border:1.5px solid currentColor}
+.note{border-left:4px solid var(--unsure);padding:8px 12px;background:#fbf3df;border-radius:0 8px 8px 0;font-size:.95rem}
+.hidden{display:none !important}
+@media (orientation:landscape) and (max-height:540px){
+  main{padding:6px 16px;gap:8px}
+  header h1{font-size:1.1rem}
+  .steps{font-size:.8rem}
+  .steps li{padding:1px 8px}
+  .banner{font-size:2.4rem;padding:4px 12px}
+}
+dialog{border:none;border-radius:12px;padding:0;max-width:min(96vw,760px);width:100%}
+dialog::backdrop{background:rgba(12,22,32,.7)}
+dialog .inner{padding:12px;display:flex;flex-direction:column;gap:10px}
+dialog canvas{width:100%;height:auto;border-radius:8px;background:#0c1620;display:block}
+details summary{cursor:pointer;font-weight:600;padding:10px 0}
+ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pickle<span>baller</span> line caller</h1>
+    <ol class="steps" aria-label="Steps">
+      <li id="st1" aria-current="step">1 Video</li>
+      <li id="st2">2 Court</li>
+      <li id="st3">3 Calls</li>
+    </ol>
+  </header>
+
+  <!-- STEP 1 -->
+  <section class="card" id="s-source">
+    <h2>Point a phone at your side of the court</h2>
+    <p><strong>Turn the phone sideways</strong> before you start, so the whole width of the court fits in the picture.</p>
+    <p>Each phone watches one half of the court and calls the bounces that land there. Put it on a fixed mount behind the baseline, as high as you safely can, so both sidelines and the baseline are in the picture. For two phones, open this page on both and set one up on each side.</p>
+    <div class="sources">
+      <div>
+        <button id="b-demo">Watch the built-in demo</button>
+        <small>A simulated court with a bouncing ball. No camera needed.</small>
+      </div>
+      <div>
+        <label class="btn" for="f-rec">Record a clip now<input id="f-rec" type="file" accept="video/*" capture="environment"></label>
+        <small>Opens your phone camera. Slo-mo clips give the best calls.</small>
+      </div>
+      <div>
+        <label class="btn ghost" for="f-pick">Choose a saved video<input id="f-pick" type="file" accept="video/*"></label>
+        <small>Use this on a laptop to test with footage you already have.</small>
+      </div>
+      <div>
+        <button id="b-live" class="ghost">Use the live camera</button>
+        <small>Calls bounces as they happen. Works when this page is opened as a file or its own site.</small>
+      </div>
+    </div>
+    <p class="note hidden" id="src-msg" role="alert"></p>
+  </section>
+
+  <!-- shared stage -->
+  <section class="hidden" id="s-stage">
+    <div class="stage" id="stage">
+      <canvas id="proc" width="960" height="540"></canvas>
+      <canvas id="ov" width="960" height="540"></canvas>
+      <div class="banner hidden" id="banner" role="status" aria-live="assertive"></div>
+    </div>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="card hidden" id="s-calib">
+    <h2>Drag the four dots onto the court corners</h2>
+    <p>Put each dot on the <strong>outside edge</strong> of the line. Dots 1 and 2 go on the baseline corners. Dots 3 and 4 go where the sidelines meet the line you pick below.</p>
+    <div class="row">
+      <label for="ref">Dots 3 and 4 sit on
+        <select id="ref">
+          <option value="net">the net (sideline meets net)</option>
+          <option value="kitchen">the kitchen line (sideline meets kitchen line)</option>
+        </select>
+      </label>
+      <label for="scrub" id="scrub-l" class="hidden">Pick a clear frame
+        <input id="scrub" type="range" min="0" max="1000" value="0">
+      </label>
+    </div>
+    <div class="row">
+      <button id="b-start">Start calling lines</button>
+      <button id="b-back1" class="ghost">Change video</button>
+    </div>
+    <p class="muted">If you move the phone later, come back and line the dots up again.</p>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="card hidden" id="s-run">
+    <div class="tiles" aria-label="Summary">
+      <div class="tile"><b id="n-in">0</b><span>In</span></div>
+      <div class="tile"><b id="n-out">0</b><span>Out</span></div>
+      <div class="tile"><b id="n-un">0</b><span>Too close</span></div>
+      <div class="tile"><b id="n-acc">0/0</b><span>Checked right</span></div>
+    </div>
+    <div class="row">
+      <button id="b-pause" class="ghost">Pause</button>
+      <span class="meta" id="prog" role="status"></span>
+      <button id="b-again" class="ghost">Run again</button>
+      <button id="b-recal" class="ghost">Move the dots</button>
+      <button id="b-new" class="ghost">Change video</button>
+    </div>
+    <div class="row">
+      <label class="check" for="serve"><input type="checkbox" id="serve"> Serve (kitchen and kitchen line are out)</label>
+      <label class="check" for="voice"><input type="checkbox" id="voice" checked> Say the call out loud</label>
+    </div>
+    <details>
+      <summary>Tuning</summary>
+      <div class="row">
+        <label for="band">Too-close zone: <span id="band-v">6 cm</span>
+          <input id="band" type="range" min="0" max="20" value="6"></label>
+        <label for="sens">Motion sensitivity: <span id="sens-v">24</span>
+          <input id="sens" type="range" min="10" max="60" value="24"></label>
+        <label for="speed" id="speed-l">Frames per second in the clip
+          <select id="speed"><option value="30">30</option><option value="60" selected>60</option><option value="120">120 (slo-mo)</option><option value="240">240 (slo-mo)</option></select></label>
+      </div>
+    </details>
+    <div class="split">
+      <div>
+        <h2>Calls</h2>
+        <p class="muted" id="empty">No bounces yet. Each bounce on this half shows up here with a replay.</p>
+        <ol class="calls" id="calls"></ol>
+      </div>
+      <div>
+        <canvas id="map" width="300" height="360" aria-label="Top-down map of bounces on this half"></canvas>
+        <p class="meta">Net at top. Dots are bounces.</p>
+      </div>
+    </div>
+    <div class="row">
+      <button id="b-copy" class="ghost small">Copy results as a table</button>
+      <span class="meta" id="copy-msg" role="status"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>What this prototype does and does not do</h2>
+    <ul class="plain">
+      <li>It finds the ball by motion, spots the frame where it stops falling and starts rising, and maps that spot onto the court.</li>
+      <li>A ball touching the line is in. Anything inside the too-close zone is reported as too close to call, never as out.</li>
+      <li>You are the check. Watch the replay and mark each call right or wrong. That tally is your accuracy count.</li>
+      <li>A paddle hit low to the ground can look like a bounce. Use Not a bounce to remove it.</li>
+      <li>At 60 frames a second a fast ball moves about 45 cm between frames, so slo-mo recording matters.</li>
+    </ul>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <div class="inner">
+    <h2 id="dlg-title">Replay</h2>
+    <canvas id="rp" width="480" height="270"></canvas>
+    <div class="row">
+      <button id="rp-again" class="ghost">Play again</button>
+      <button id="rp-close">Close</button>
+    </div>
+  </div>
+</dialog>
+<video id="vid" class="hidden" playsinline muted></video>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const proc = $("proc"), pctx = proc.getContext("2d", {willReadFrequently:true});
+const ov = $("ov"), octx = ov.getContext("2d");
+const vid = $("vid");
+const W_M = 6.096, L_M = 6.706, NVZ = 2.134, BALL_R = 0.037;
+
+const S = {
+  src:null, mode:"source", running:false, paused:false,
+  PW:960, PH:540,
+  handles:[[0.12,0.80],[0.88,0.80],[0.70,0.38],[0.30,0.38]],
+  H:null, Hinv:null,
+  prev1:null, prev2:null, tracks:[], calls:[], pending:[], ring:[],
+  lastCallT:-9, t:0, frameN:0, bannerUntil:0, fileUrl:null, stream:null, demo:null, drag:-1
+};
+
+/* ---------- homography ---------- */
+function solve(A,b){const n=b.length;for(let i=0;i<n;i++){let m=i;for(let r=i+1;r<n;r++)if(Math.abs(A[r][i])>Math.abs(A[m][i]))m=r;[A[i],A[m]]=[A[m],A[i]];[b[i],b[m]]=[b[m],b[i]];if(Math.abs(A[i][i])<1e-12)return null;for(let r=i+1;r<n;r++){const f=A[r][i]/A[i][i];for(let c=i;c<n;c++)A[r][c]-=f*A[i][c];b[r]-=f*b[i];}}const x=new Array(n);for(let i=n-1;i>=0;i--){let s=b[i];for(let c=i+1;c<n;c++)s-=A[i][c]*x[c];x[i]=s/A[i][i];}return x;}
+function homography(src,dst){const A=[],b=[];for(let i=0;i<4;i++){const [u,v]=src[i],[X,Y]=dst[i];A.push([u,v,1,0,0,0,-u*X,-v*X]);b.push(X);A.push([0,0,0,u,v,1,-u*Y,-v*Y]);b.push(Y);}return solve(A,b);}
+function applyH(h,u,v){const d=h[6]*u+h[7]*v+1;return [(h[0]*u+h[1]*v+h[2])/d,(h[3]*u+h[4]*v+h[5])/d];}
+function courtRef(){const y=$("ref").value==="kitchen"?NVZ:0;return [[0,L_M],[W_M,L_M],[W_M,y],[0,y]];}
+function buildH(){const img=S.handles.map(([x,y])=>[x*S.PW,y*S.PH]);const ref=courtRef();S.H=homography(img,ref);S.Hinv=homography(ref,img);return !!(S.H&&S.Hinv);}
+
+/* ---------- verdict ---------- */
+function judge(X,Y){
+  let m=Math.min(X,W_M-X,L_M-Y);            // metres inside the nearest outer line (negative = outside)
+  let line=m===X||m===W_M-X?"sideline":"baseline";
+  m+=BALL_R*0.6;                            // a ball touching the line is in
+  if($("serve").checked){const k=Y-NVZ-BALL_R*0.6;if(k<m){m=k;line="kitchen line";}}
+  const band=+$("band").value/100;
+  const v=Math.abs(m)<band?"unsure":(m>=0?"in":"out");
+  return {v,m,line};
+}
+const LABEL={in:"In",out:"Out",unsure:"Too close to call"};
+
+/* ---------- sources ---------- */
+function showMsg(t){const e=$("src-msg");e.textContent=t;e.classList.toggle("hidden",!t);}
+function setSize(w,h){const k=960/Math.max(w,h);S.PW=Math.round(w*k);S.PH=Math.round(h*k);proc.width=ov.width=S.PW;proc.height=ov.height=S.PH;$("stage").style.maxWidth="calc(100dvh * "+(S.PW/S.PH).toFixed(4)+")";}
+function stopSource(){S.running=false;runTok++;S.mode="source";try{vid.pause();}catch(e){}if(S.stream){S.stream.getTracks().forEach(t=>t.stop());S.stream=null;}vid.srcObject=null;if(S.fileUrl){URL.revokeObjectURL(S.fileUrl);S.fileUrl=null;}vid.removeAttribute("src");}
+function go(mode){
+  S.mode=mode;
+  $("s-source").classList.toggle("hidden",mode!=="source");
+  $("s-stage").classList.toggle("hidden",mode==="source");
+  $("s-calib").classList.toggle("hidden",mode!=="calib");
+  $("s-run").classList.toggle("hidden",mode!=="run");
+  [["st1","source"],["st2","calib"],["st3","run"]].forEach(([id,m])=>{if(m===mode)$(id).setAttribute("aria-current","step");else $(id).removeAttribute("aria-current");});
+  $("scrub-l").classList.toggle("hidden",S.src!=="file");
+  $("speed-l").classList.toggle("hidden",S.src!=="file");
+  $("b-again").classList.toggle("hidden",S.src==="live");
+  if(mode==="calib")calibLoop();
+}
+function useFile(file){
+  if(!file)return;showMsg("");stopSource();S.src="file";
+  S.fileUrl=URL.createObjectURL(file);vid.src=S.fileUrl;vid.loop=false;
+  vid.onloadedmetadata=()=>{setSize(vid.videoWidth||960,vid.videoHeight||540);vid.currentTime=Math.min(0.1,(vid.duration||1)/2);go("calib");};
+  vid.onerror=()=>{showMsg("This video could not be opened. Try an MP4 or MOV recorded by your phone camera.");go("source");};
+}
+async function useLive(){
+  showMsg("");stopSource();
+  try{
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error("none");
+    S.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:60}}});
+    S.src="live";vid.srcObject=S.stream;await vid.play();
+    setSize(vid.videoWidth||960,vid.videoHeight||540);go("calib");
+  }catch(e){
+    showMsg("The live camera is blocked here. Tap Record a clip now instead, or open the downloaded Pickleballer file in Chrome on a laptop to use a live camera.");
+  }
+}
+function useDemo(){showMsg("");stopSource();S.src="demo";setSize(960,540);S.demo=makeDemo();S.handles=S.demo.corners.map(([x,y])=>[x/S.PW,y/S.PH]);$("ref").value="net";go("calib");}
+
+/* ---------- demo scene ---------- */
+function makeDemo(){
+  const C=[W_M/2,L_M+6,2.5],th=14*Math.PI/180,F=831,cx=480,cy=270,cs=Math.cos(th),sn=Math.sin(th);
+  const pr=(X,Y,Z)=>{const dx=X-C[0],dy=Y-C[1],dz=Z-C[2];const xc=-dx,yc=-dy*sn+dz*cs,zc=-dy*cs-dz*sn;return [cx+F*xc/zc,cy-F*yc/zc,F/zc];};
+  const g=p=>pr(p[0],p[1],0);
+  const d={t:0,ball:null,wait:0.3,truth:[],n:0,
+    corners:[g([0,L_M]),g([W_M,L_M]),g([W_M,0]),g([0,0])].map(p=>[p[0],p[1]])};
+  const targets=[[3,4,0],[0.03,5,0],[-0.12,3.5,0],[6.3,4.5,0],[5.9,6.0,0],[2,6.9,0],[4,6.62,0],[0.45,6.3,0],[6.07,3,0],[3.3,7.2,0],[1.2,3.2,0],[-0.03,6.0,0]];
+  function shot(){const tg=targets[d.n%targets.length];d.n++;const p=[1+Math.random()*4,-5,1.0],T=1.0+Math.random()*0.25;
+    d.ball={p,v:[(tg[0]-p[0])/T,(tg[1]-p[1])/T,(BALL_R-p[2]+0.5*9.81*T*T)/T],b:0,after:0};}
+  d.step=dt=>{d.t+=dt;if(!d.ball){d.wait-=dt;if(d.wait<=0)shot();return;}
+    const b=d.ball,n=4;for(let i=0;i<n;i++){const h=dt/n;b.v[2]-=9.81*h;b.p[0]+=b.v[0]*h;b.p[1]+=b.v[1]*h;b.p[2]+=b.v[2]*h;
+      if(b.p[2]<=BALL_R&&b.v[2]<0){b.p[2]=BALL_R;b.v[2]*=-0.62;b.b++;if(b.b===1)d.truth.push({t:d.t,X:b.p[0],Y:b.p[1]});}}
+    if(b.b>=1){b.after+=dt;if(b.after>0.55){d.ball=null;d.wait=0.5;}}};
+  d.draw=c=>{c.fillStyle="#2f7a52";c.fillRect(0,0,960,540);
+    const q=[[0,L_M],[W_M,L_M],[W_M,0],[0,0]].map(g);c.fillStyle="#2a62a6";c.beginPath();q.forEach((p,i)=>i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1]));c.closePath();c.fill();
+    c.strokeStyle="#f4f6f2";c.lineWidth=3;c.stroke();
+    const ln=(a,b)=>{const A=g(a),B=g(b);c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke();};
+    ln([0,NVZ],[W_M,NVZ]);ln([W_M/2,NVZ],[W_M/2,L_M]);
+    const n1=pr(-0.3,0,0.91),n2=pr(W_M+0.3,0,0.91),n3=pr(W_M+0.3,0,0),n4=pr(-0.3,0,0);
+    c.fillStyle="rgba(20,30,40,.55)";c.beginPath();c.moveTo(n1[0],n1[1]);c.lineTo(n2[0],n2[1]);c.lineTo(n3[0],n3[1]);c.lineTo(n4[0],n4[1]);c.closePath();c.fill();
+    c.strokeStyle="#f4f6f2";c.lineWidth=2;c.beginPath();c.moveTo(n1[0],n1[1]);c.lineTo(n2[0],n2[1]);c.stroke();
+    const px=1.5+2.2*Math.sin(d.t*0.9),pp=pr(px,L_M-0.6,0.9);c.fillStyle="#3b2a4a";c.fillRect(pp[0]-pp[2]*0.25,pp[1]-pp[2]*0.9,pp[2]*0.5,pp[2]*1.8);
+    if(d.ball){const p=pr(d.ball.p[0],d.ball.p[1],d.ball.p[2]);c.fillStyle="#e6ee3a";c.beginPath();c.arc(p[0],p[1],Math.max(2,p[2]*BALL_R),0,7);c.fill();}};
+  return d;
+}
+
+/* ---------- calibration ---------- */
+function drawSource(){
+  if(S.src==="demo"){S.demo.draw(pctx);return true;}
+  if(vid.readyState<2)return false;
+  pctx.drawImage(vid,0,0,S.PW,S.PH);return true;
+}
+function drawCourtOutline(c,sx,sy,alpha){
+  if(!S.Hinv)return;
+  const P=(X,Y)=>{const p=applyH(S.Hinv,X,Y);return [p[0]*sx,p[1]*sy];};
+  c.save();c.globalAlpha=alpha;c.strokeStyle="#ffe14d";c.lineWidth=2;
+  const seg=(a,b)=>{const A=P(...a),B=P(...b);c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke();};
+  seg([0,0],[W_M,0]);seg([W_M,0],[W_M,L_M]);seg([W_M,L_M],[0,L_M]);seg([0,L_M],[0,0]);seg([0,NVZ],[W_M,NVZ]);
+  c.restore();
+}
+function calibLoop(){
+  if(S.mode!=="calib")return;
+  drawSource();buildH();
+  octx.clearRect(0,0,S.PW,S.PH);drawCourtOutline(octx,1,1,0.9);
+  S.handles.forEach(([x,y],i)=>{const px=x*S.PW,py=y*S.PH;
+    octx.beginPath();octx.arc(px,py,16,0,7);octx.fillStyle="rgba(255,255,255,.25)";octx.fill();octx.lineWidth=3;octx.strokeStyle="#ffffff";octx.stroke();
+    octx.beginPath();octx.arc(px,py,3,0,7);octx.fillStyle="#ffe14d";octx.fill();
+    octx.font="700 22px Barlow, Arial";octx.fillStyle="#fff";octx.strokeStyle="#000";octx.lineWidth=4;octx.strokeText(i+1,px+18,py-14);octx.fillText(i+1,px+18,py-14);});
+  requestAnimationFrame(calibLoop);
+}
+function evPos(e){const r=ov.getBoundingClientRect();return [(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height];}
+ov.addEventListener("pointerdown",e=>{if(S.mode!=="calib")return;const [x,y]=evPos(e);let best=-1,bd=0.12;S.handles.forEach((h,i)=>{const d=Math.hypot(h[0]-x,h[1]-y);if(d<bd){bd=d;best=i;}});S.drag=best;if(best>=0){ov.setPointerCapture(e.pointerId);e.preventDefault();}});
+ov.addEventListener("pointermove",e=>{if(S.drag<0)return;const [x,y]=evPos(e);S.handles[S.drag]=[Math.min(1,Math.max(0,x)),Math.min(1,Math.max(0,y))];});
+ov.addEventListener("pointerup",()=>{S.drag=-1;});
+ov.addEventListener("pointercancel",()=>{S.drag=-1;});
+$("scrub").addEventListener("input",e=>{if(S.src==="file"&&vid.duration)vid.currentTime=vid.duration*e.target.value/1000;});
+
+/* ---------- detection ---------- */
+function resetRun(){S.prev1=S.prev2=null;S.tracks=[];S.calls=[];S.pending=[];S.ring=[];S.lastCallT=-9;S.frameN=0;S.bannerUntil=0;$("banner").classList.add("hidden");renderCalls();}
+let mask=null,stack=null;
+function detect(data){
+  const w=S.PW,h=S.PH,n=w*h,thr=+$("sens").value;
+  if(!mask||mask.length!==n){mask=new Uint8Array(n);stack=new Int32Array(n);}
+  const a=S.prev1,b=S.prev2;let on=0,moved=0;
+  for(let i=0,j=0;i<n;i++,j+=4){
+    const r=data[j],g=data[j+1],bl=data[j+2];
+    const d1=Math.max(Math.abs(r-a[j]),Math.abs(g-a[j+1]),Math.abs(bl-a[j+2]));
+    if(d1>thr){moved++;const d2=Math.max(Math.abs(r-b[j]),Math.abs(g-b[j+1]),Math.abs(bl-b[j+2]));if(d2>thr){mask[i]=1;on++;continue;}}
+    mask[i]=0;
+  }
+  if(!moved)return null;                     // same picture as last time: a repeated frame
+  if(on>n*0.04)return [];                    // whole picture moved: camera shake or a cut
+  const out=[],maxA=Math.round(n/900);
+  for(let i=0;i<n;i++){
+    if(mask[i]!==1)continue;
+    let sp=0,area=0,sx=0,sy=0,x0=w,x1=0,y0=h,y1=0;stack[sp++]=i;mask[i]=2;
+    while(sp){const p=stack[--sp],x=p%w,y=(p-x)/w;area++;sx+=x;sy+=y;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+      for(let dy=-1;dy<=1;dy++){const yy=y+dy;if(yy<0||yy>=h)continue;for(let dx=-1;dx<=1;dx++){const xx=x+dx;if(xx<0||xx>=w)continue;const q=yy*w+xx;if(mask[q]===1){mask[q]=2;stack[sp++]=q;}}}}
+    if(area<3||area>maxA)continue;
+    const bw=x1-x0+1,bh=y1-y0+1;if(Math.max(bw,bh)/Math.min(bw,bh)>6)continue;
+    out.push({x:sx/area,y:sy/area,r:Math.min(bw,bh)/2,area});
+  }
+  return out.length>40?[]:out;
+}
+function fitLine(pts){let sx=0,sy=0,n=pts.length;pts.forEach(p=>{sx+=p.x;sy+=p.y;});const mx=sx/n,my=sy/n;let a=0,b=0,c=0;pts.forEach(p=>{const dx=p.x-mx,dy=p.y-my;a+=dx*dx;b+=dx*dy;c+=dy*dy;});const ang=0.5*Math.atan2(2*b,a-c);return {x:mx,y:my,dx:Math.cos(ang),dy:Math.sin(ang)};}
+function intersect(l1,l2){const det=l1.dx*l2.dy-l1.dy*l2.dx;if(Math.abs(det)<0.05)return null;const t=((l2.x-l1.x)*l2.dy-(l2.y-l1.y)*l2.dx)/det;return {x:l1.x+t*l1.dx,y:l1.y+t*l1.dy};}
+function track(cands,t){
+  const used=new Set();
+  S.tracks.forEach(tr=>{
+    const p=tr.pts,last=p[p.length-1],dt=t-last.t;let px=last.x,py=last.y,sp=0;
+    if(p.length>1){const q=p[p.length-2],d0=last.t-q.t||1e-3;const vx=(last.x-q.x)/d0,vy=(last.y-q.y)/d0;px+=vx*dt;py+=vy*dt;sp=Math.hypot(vx,vy)*dt;}
+    const gate=S.PW*0.035+sp*1.2;let best=-1,bd=gate;
+    cands.forEach((c,i)=>{if(used.has(i))return;const d=Math.hypot(c.x-px,c.y-py);if(d<bd){bd=d;best=i;}});
+    if(best>=0){used.add(best);const c=cands[best];p.push({t,x:c.x,y:c.y,r:c.r});if(p.length>120)p.shift();checkBounce(tr);}
+  });
+  cands.forEach((c,i)=>{if(!used.has(i)&&S.tracks.length<10)S.tracks.push({pts:[{t,x:c.x,y:c.y,r:c.r}]});});
+  S.tracks=S.tracks.filter(tr=>t-tr.pts[tr.pts.length-1].t<0.13);
+}
+function kink(p,c,k){const vb=(p[c].y-p[c-k].y)/(p[c].t-p[c-k].t||1e-3),va=(p[c+k].y-p[c].y)/(p[c+k].t-p[c].t||1e-3);return vb>0&&va<vb*0.5?vb-va:0;}
+function checkBounce(tr){
+  const p=tr.pts,n=p.length;if(n<9)return;
+  const fd=(p[n-1].t-p[n-6].t)/5||1/60;                 // frame spacing
+  const k=Math.max(3,Math.min(14,Math.round(0.05/fd)));  // look about 50 ms each side
+  const c=n-k-2;if(c-k-1<0)return;
+  const P=p[c],kc=kink(p,c,k);
+  // a bounce is a sudden upward turn in the picture: falling speed drops sharply
+  if(!(kc>S.PH*0.28&&kc>=kink(p,c-1,k)&&kc>kink(p,c+1,k)))return;
+  if(tr.lastB&&P.t-tr.lastB<0.25)return;
+  if(P.t-S.lastCallT<0.35)return;
+  let travel=0;for(let i=1;i<n;i++)travel+=Math.hypot(p[i].x-p[i-1].x,p[i].y-p[i-1].y);if(travel<S.PW*0.03)return;
+  let bx=P.x,by=P.y;
+  const hit=intersect(fitLine(p.slice(c-k,c)),fitLine(p.slice(c+1,c+k+1)));
+  if(hit&&Math.hypot(hit.x-P.x,hit.y-P.y)<S.PW*0.03){bx=hit.x;by=hit.y;}
+  const rs=p.slice(c-k,c+k+1).map(q=>q.r).sort((a,b)=>a-b),rr=rs[rs.length>>1];
+  by+=rr;                                    // contact point is under the ball
+  const [X,Y]=applyH(S.H,bx,by);
+  if(!(X>-2.5&&X<W_M+2.5&&Y>-0.25&&Y<L_M+3.5))return;   // off the watched half: not this phone's call
+  tr.lastB=P.t;S.lastCallT=P.t;
+  const j=judge(X,Y);
+  const call={id:S.calls.length+1,t:P.t,X,Y,ix:bx/S.PW,iy:by/S.PH,v:j.v,m:j.m,line:j.line,serve:$("serve").checked,check:null,clip:null};
+  if(S.src==="demo"){const tr2=S.demo.truth.reduce((b,q)=>Math.abs(q.t-P.t)<Math.abs(b.t-P.t)?q:b,S.demo.truth[0]||{t:1e9});if(tr2&&Math.abs(tr2.t-P.t)<0.2){call.truth=Math.min(tr2.X,W_M-tr2.X,L_M-tr2.Y)+BALL_R*0.6;call.err=Math.hypot(tr2.X-X,tr2.Y-Y);}}
+  S.calls.push(call);S.pending.push(call);announce(call);renderCalls();
+}
+function announce(c){
+  const b=$("banner");b.className="banner "+c.v;
+  b.innerHTML=LABEL[c.v]+" <small>"+distText(c)+"</small>";
+  S.bannerUntil=performance.now()+1800;
+  if($("voice").checked){try{const u=new SpeechSynthesisUtterance(c.v==="unsure"?"Too close":LABEL[c.v]);u.rate=1.2;speechSynthesis.cancel();speechSynthesis.speak(u);}catch(e){}}
+}
+function distText(c){const cm=Math.round(Math.abs(c.m)*100);return cm+" cm "+(c.m>=0?"inside":"outside")+" the "+c.line;}
+
+/* ---------- frame loop ---------- */
+const clipC=document.createElement("canvas"),clipX=clipC.getContext("2d");
+function onFrame(t){
+  S.t=t;S.frameN++;
+  if(!drawSource())return;
+  const img=pctx.getImageData(0,0,S.PW,S.PH),data=img.data;
+  let dup=false;
+  if(S.prev1&&S.prev2&&S.prev1.length===data.length){const cs=detect(data);if(cs===null)dup=true;else track(cs,t);}
+  if(!dup){S.prev2=S.prev1;S.prev1=data;}
+  // replay buffer
+  const cw=480,ch=Math.round(480*S.PH/S.PW);if(clipC.width!==cw||clipC.height!==ch){clipC.width=cw;clipC.height=ch;}
+  clipX.drawImage(proc,0,0,cw,ch);
+  clipC.toBlob(b=>{if(!b)return;S.ring.push({t,b});while(S.ring.length&&S.ring[0].t<t-2.2)S.ring.shift();},"image/jpeg",0.6);
+  S.pending=S.pending.filter(c=>{if(t<c.t+0.6)return true;finishClip(c);return false;});
+  drawOverlay();
+}
+function finishClip(c){c.clip=S.ring.filter(f=>f.t>=c.t-1.0&&f.t<=c.t+0.7).sort((a,b)=>a.t-b.t);const el=document.querySelector('[data-rp="'+c.id+'"]');if(el)el.disabled=!c.clip.length;}
+function drawOverlay(){
+  octx.clearRect(0,0,S.PW,S.PH);drawCourtOutline(octx,1,1,0.55);
+  S.tracks.forEach(tr=>{if(tr.pts.length<4)return;octx.strokeStyle="#ffe14d";octx.lineWidth=2;octx.beginPath();tr.pts.forEach((p,i)=>i?octx.lineTo(p.x,p.y):octx.moveTo(p.x,p.y));octx.stroke();});
+  const col={in:"#3ddc84",out:"#ff6b5e",unsure:"#ffc04d"};
+  S.calls.slice(-6).forEach(c=>{octx.beginPath();octx.arc(c.ix*S.PW,c.iy*S.PH,9,0,7);octx.lineWidth=3;octx.strokeStyle=col[c.v];octx.stroke();});
+  if(performance.now()>S.bannerUntil)$("banner").classList.add("hidden");
+}
+function tick(){
+  if(!S.running)return;
+  if(!S.paused&&S.src==="demo"){S.demo.step(1/60);onFrame(S.demo.t);}
+  requestAnimationFrame(tick);
+}
+function liveFrame(now,meta){
+  if(!S.running||S.src!=="live")return;
+  if(!S.paused)onFrame(meta&&meta.mediaTime?meta.mediaTime:performance.now()/1000);
+  if(vid.requestVideoFrameCallback)vid.requestVideoFrameCallback(liveFrame);else requestAnimationFrame(liveFrame);
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function seekTo(t){return new Promise(res=>{let done=false;
+  const fin=v=>{if(done)return;done=true;vid.removeEventListener("seeked",onS);res(v);};
+  const onS=()=>setTimeout(()=>fin(null),60);          // fall back if no new frame is reported
+  vid.addEventListener("seeked",onS);setTimeout(()=>fin(null),1500);
+  if(vid.requestVideoFrameCallback)vid.requestVideoFrameCallback((n,m)=>fin(m.mediaTime));
+  vid.currentTime=t;});}
+let runTok=0;
+async function fileLoop(){
+  // step through the clip one frame at a time so no frame is skipped
+  let lastT=-1;const tok=++runTok,step=1/(+$("speed").value),dur=vid.duration||0;vid.pause();
+  for(let t=0;t<dur-step/2;t+=step){
+    if(tok!==runTok||!S.running||S.src!=="file")return;
+    while(S.paused){await sleep(100);if(tok!==runTok||!S.running)return;}
+    const mt=await seekTo(t+step/2);if(mt!==null&&mt<=lastT)continue;lastT=mt!==null?mt:t;onFrame(lastT);
+    if(S.frameN%10===0)$("prog").textContent="Checked "+Math.round(100*t/dur)+"% of the clip";
+  }
+  S.pending.forEach(finishClip);S.pending=[];$("prog").textContent="Finished. "+S.calls.length+" bounce"+(S.calls.length===1?"":"s")+" found.";
+  $("b-pause").disabled=true;
+}
+function start(){
+  if(!buildH()){alertMsg("The four dots need to make a four-sided shape. Move them apart.");return;}
+  resetRun();keepAwake();$("stage").scrollIntoView({block:"start"});S.running=true;S.paused=false;$("b-pause").textContent="Pause";go("run");
+  $("prog").textContent="";$("b-pause").disabled=false;runTok++;
+  if(S.src==="demo"){S.demo=makeDemo();requestAnimationFrame(tick);}
+  else if(S.src==="live"){liveFrame();}
+  else fileLoop();
+}
+function alertMsg(t){const b=$("banner");b.className="banner unsure";b.innerHTML="<small>"+t+"</small>";S.bannerUntil=performance.now()+4000;setTimeout(()=>{if(performance.now()>S.bannerUntil)b.classList.add("hidden");},4100);}
+
+/* ---------- calls list, map, replay ---------- */
+function renderCalls(){
+  const ol=$("calls");ol.innerHTML="";$("empty").classList.toggle("hidden",S.calls.length>0);
+  let ni=0,no=0,nu=0,ck=0,ok=0;
+  S.calls.slice().reverse().forEach(c=>{
+    if(c.v==="in")ni++;else if(c.v==="out")no++;else nu++;
+    if(c.check!==null){ck++;if(c.check)ok++;}
+    const li=document.createElement("li");li.className=c.v;
+    const truth=c.truth!=null?" · demo truth: "+Math.round(Math.abs(c.truth)*100)+" cm "+(c.truth>=0?"in":"out"):"";
+    li.innerHTML='<div class="row"><span class="verdict '+c.v+'">'+LABEL[c.v]+'</span>'+(c.serve?'<span class="pill">Serve</span>':'')+(c.check===true?'<span class="pill">Marked right</span>':c.check===false?'<span class="pill">Marked wrong</span>':'')+'</div>'+
+      '<div class="meta">#'+c.id+' at '+c.t.toFixed(2)+' s · '+distText(c)+truth+'</div>'+
+      '<div class="row"><button class="small" data-rp="'+c.id+'"'+(c.clip&&c.clip.length?'':' disabled')+'>Replay</button><button class="small ghost" data-ok="'+c.id+'">Right</button><button class="small ghost" data-no="'+c.id+'">Wrong</button><button class="small ghost" data-del="'+c.id+'">Not a bounce</button></div>';
+    ol.appendChild(li);
+  });
+  $("n-in").textContent=ni;$("n-out").textContent=no;$("n-un").textContent=nu;$("n-acc").textContent=ok+"/"+ck;
+  drawMap();
+}
+$("calls").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;const d=b.dataset;
+  const find=id=>S.calls.find(c=>c.id===+id);
+  if(d.rp)replay(find(d.rp));
+  else if(d.ok){find(d.ok).check=true;renderCalls();}
+  else if(d.no){find(d.no).check=false;renderCalls();}
+  else if(d.del){S.calls=S.calls.filter(c=>c.id!==+d.del);renderCalls();}
+});
+function drawMap(){
+  const c=$("map"),x=c.getContext("2d"),pad=32,sc=(c.width-2*pad)/W_M;
+  x.fillStyle="#2f7a52";x.fillRect(0,0,c.width,c.height);
+  const ox=pad,oy=18;x.fillStyle="#2a62a6";x.fillRect(ox,oy,W_M*sc,L_M*sc);
+  x.strokeStyle="#fff";x.lineWidth=2;x.strokeRect(ox,oy,W_M*sc,L_M*sc);
+  x.beginPath();x.moveTo(ox,oy+NVZ*sc);x.lineTo(ox+W_M*sc,oy+NVZ*sc);x.moveTo(ox+W_M*sc/2,oy+NVZ*sc);x.lineTo(ox+W_M*sc/2,oy+L_M*sc);x.stroke();
+  x.lineWidth=4;x.strokeStyle="#14212b";x.beginPath();x.moveTo(ox-8,oy);x.lineTo(ox+W_M*sc+8,oy);x.stroke();
+  const col={in:"#3ddc84",out:"#ff6b5e",unsure:"#ffc04d"};
+  S.calls.forEach(k=>{const px=ox+k.X*sc,py=oy+k.Y*sc;x.beginPath();x.arc(Math.min(c.width-5,Math.max(5,px)),Math.min(c.height-5,Math.max(5,py)),5,0,7);x.fillStyle=col[k.v];x.fill();x.lineWidth=1.5;x.strokeStyle="#14212b";x.stroke();});
+}
+let rpTok=0,rpCall=null;
+async function replay(c){
+  if(!c||!c.clip||!c.clip.length)return;rpCall=c;const tok=++rpTok;
+  const cv=$("rp"),x=cv.getContext("2d");
+  $("dlg-title").textContent="Replay #"+c.id+": "+LABEL[c.v]+", "+distText(c);
+  if(!$("dlg").open)$("dlg").showModal();
+  const frames=await Promise.all(c.clip.map(f=>createImageBitmap(f.b)));
+  if(tok!==rpTok)return;
+  cv.width=frames[0].width;cv.height=frames[0].height;
+  const col={in:"#3ddc84",out:"#ff6b5e",unsure:"#ffc04d"}[c.v];
+  const paint=i=>{x.drawImage(frames[i],0,0);drawCourtOutline(x,cv.width/S.PW,cv.height/S.PH,0.5);
+    if(c.clip[i].t>=c.t-1e-4){x.beginPath();x.arc(c.ix*cv.width,c.iy*cv.height,8,0,7);x.lineWidth=3;x.strokeStyle=col;x.stroke();}};
+  const slow=4,t0=performance.now(),first=c.clip[0].t;let i=0;
+  (function step(){if(tok!==rpTok)return;const el=(performance.now()-t0)/1000/slow+first;while(i<frames.length-1&&c.clip[i+1].t<=el)i++;paint(i);if(i<frames.length-1)requestAnimationFrame(step);})();
+}
+$("rp-again").onclick=()=>replay(rpCall);
+$("rp-close").onclick=()=>{rpTok++;$("dlg").close();};
+
+/* ---------- controls ---------- */
+$("b-demo").onclick=useDemo;
+$("b-live").onclick=useLive;
+$("f-rec").onchange=e=>useFile(e.target.files[0]);
+$("f-pick").onchange=e=>useFile(e.target.files[0]);
+$("b-start").onclick=start;
+const toSource=()=>{stopSource();S.src=null;$("f-rec").value="";$("f-pick").value="";go("source");};
+$("b-back1").onclick=toSource;$("b-new").onclick=toSource;
+$("b-recal").onclick=()=>{S.running=false;runTok++;go("calib");};
+$("b-again").onclick=start;
+$("b-pause").onclick=()=>{S.paused=!S.paused;$("b-pause").textContent=S.paused?"Resume":"Pause";};
+$("band").oninput=e=>{$("band-v").textContent=e.target.value+" cm";S.calls.forEach(c=>{const j=Math.abs(c.m)<e.target.value/100?"unsure":(c.m>=0?"in":"out");c.v=j;});renderCalls();};
+$("sens").oninput=e=>{$("sens-v").textContent=e.target.value;};
+$("b-copy").onclick=async()=>{
+  const rows=["#\ttime_s\tcall\tcm_from_line\tline\tserve\tchecked"].concat(S.calls.map(c=>[c.id,c.t.toFixed(2),LABEL[c.v],(c.m*100).toFixed(1),c.line,c.serve?"yes":"no",c.check===null?"":c.check?"right":"wrong"].join("\t")));
+  try{await navigator.clipboard.writeText(rows.join("\n"));$("copy-msg").textContent="Copied. Paste it into a spreadsheet.";}
+  catch(e){$("copy-msg").textContent="Copy was blocked by this browser.";}
+};
+// the picture changes shape when the phone is turned: resize and line the dots up again
+vid.addEventListener("resize",()=>{
+  if(S.src!=="live"||!vid.videoWidth)return;
+  const pw=S.PW,ph=S.PH;setSize(vid.videoWidth,vid.videoHeight);
+  if(pw===S.PW&&ph===S.PH)return;
+  S.prev1=S.prev2=null;S.tracks=[];
+  if(S.mode==="run"){S.running=false;go("calib");alertMsg("The phone was turned. Line the dots up again.");}
+});
+// keep the screen awake while the camera is watching
+let wake=null;
+async function keepAwake(){try{if(navigator.wakeLock&&!wake){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>{wake=null;});}}catch(e){}}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&S.running)keepAwake();});
+drawMap();
+window.__pb=S;
+</script>
+</body>
+</html>
